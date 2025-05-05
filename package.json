@@ -9,7 +9,8 @@
     "start": "node --loader ts-node/esm dist/index.js",
     "dev": "node --loader ts-node/esm src/index.ts",
     "typecheck": "tsc --noEmit",
-    "setup": "node --loader ts-node/esm src/db/setup.ts"
+    "setup": "node --loader ts-node/esm src/db/setup.ts",
+    "drop": "node --loader ts-node/esm src/db/drop.ts"
   },
   "dependencies": {
     "ethers": "^6.11.1",

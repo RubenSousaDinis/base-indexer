@@ -64,6 +64,18 @@ For development with hot reloading:
 npm run dev
 ```
 
+### Database Management
+
+Set up the database:
+```bash
+npm run setup
+```
+
+Drop all database tables (⚠️ Warning: This will delete all data):
+```bash
+npm run drop
+```
+
 ## Architecture
 
 The indexer uses a multi-threaded architecture:

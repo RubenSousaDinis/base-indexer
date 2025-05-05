@@ -1,0 +1,28 @@
+{
+  "name": "base-indexer",
+  "version": "1.0.0",
+  "description": "Base blockchain indexer with PostgreSQL storage",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --loader ts-node/esm dist/index.js",
+    "dev": "node --loader ts-node/esm src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "setup": "node --loader ts-node/esm src/db/setup.ts"
+  },
+  "dependencies": {
+    "ethers": "^6.11.1",
+    "pg": "^8.11.3",
+    "pg-format": "^1.0.4",
+    "dotenv": "^16.4.5",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "@types/pg": "^8.11.2",
+    "@types/pg-format": "^1.0.5",
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2"
+  }
+} 

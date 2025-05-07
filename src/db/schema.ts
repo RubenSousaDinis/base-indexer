@@ -1,3 +1,4 @@
+export const schema = `
 -- Create blocks table
 CREATE TABLE IF NOT EXISTS blocks (
     number BIGINT PRIMARY KEY,
@@ -13,6 +14,7 @@ CREATE TABLE IF NOT EXISTS contracts (
     deployer TEXT NOT NULL,
     block_number BIGINT NOT NULL,
     transaction_hash TEXT NOT NULL,
+    block_timestamp TIMESTAMP NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (block_number) REFERENCES blocks(number)
 );
@@ -34,5 +36,7 @@ CREATE TABLE IF NOT EXISTS contract_interactions (
 -- Create indexes
 CREATE INDEX IF NOT EXISTS idx_blocks_timestamp ON blocks(timestamp);
 CREATE INDEX IF NOT EXISTS idx_contracts_deployer ON contracts(deployer);
+CREATE INDEX IF NOT EXISTS idx_contracts_block_timestamp ON contracts(block_timestamp);
 CREATE INDEX IF NOT EXISTS idx_contract_interactions_contract ON contract_interactions(contract_address);
-CREATE INDEX IF NOT EXISTS idx_contract_interactions_caller ON contract_interactions(caller); 
+CREATE INDEX IF NOT EXISTS idx_contract_interactions_caller ON contract_interactions(caller);
+`; 

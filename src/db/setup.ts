@@ -1,13 +1,8 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { runMigrations } from './migrations/runner.js';
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 async function createDatabase() {
   // Connect to default postgres database to create our database
@@ -51,18 +46,22 @@ async function initializeSchema() {
     password: process.env.POSTGRES_PASSWORD,
   });
 
+  const client = await pool.connect();
   try {
-    // Read and execute the schema file
-    const schemaPath = path.join(__dirname, 'schema.sql');
-    const schema = fs.readFileSync(schemaPath, 'utf8');
-    
+    console.log('Dropping all existing tables...');
+    await client.query('DROP TABLE IF EXISTS contract_interactions CASCADE');
+    await client.query('DROP TABLE IF EXISTS contracts CASCADE');
+    await client.query('DROP TABLE IF EXISTS blocks CASCADE');
+    await client.query('DROP TABLE IF EXISTS transactions CASCADE');
+    await client.query('DROP TABLE IF EXISTS events CASCADE');
+    await client.query('DROP TABLE IF EXISTS migrations CASCADE');
+    console.log('All tables dropped successfully');
+
     console.log('Initializing database schema...');
-    await pool.query(schema);
+    await runMigrations(client);
     console.log('Schema initialized successfully');
-  } catch (error) {
-    console.error('Error initializing schema:', error);
-    throw error;
   } finally {
+    client.release();
     await pool.end();
   }
 }

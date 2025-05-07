@@ -1,29 +1,14 @@
 import { BaseIndexer } from './indexer.js';
-import { query } from './db/index.js';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-async function initializeDatabase() {
-  try {
-    // Read and execute the schema file
-    const schemaPath = path.join(__dirname, 'db', 'schema.sql');
-    const schema = fs.readFileSync(schemaPath, 'utf8');
-    await query(schema);
-    console.log('Database schema initialized successfully');
-  } catch (error) {
-    console.error('Error initializing database:', error);
-    process.exit(1);
-  }
-}
+import { initializeDatabase } from './db/index.js';
+import { schema } from './db/schema.js';
+import { PoolClient } from 'pg';
 
 async function main() {
+  let client: PoolClient | null = null;
   try {
     // Initialize database
-    await initializeDatabase();
+    client = await initializeDatabase();
+    console.log('Database initialized successfully');
 
     // Create and start the indexer
     const indexer = new BaseIndexer();
@@ -32,11 +17,17 @@ async function main() {
     // Handle graceful shutdown
     process.on('SIGINT', () => {
       console.log('Shutting down indexer...');
+      if (client) {
+        client.release();
+      }
       indexer.stop();
       process.exit(0);
     });
   } catch (error) {
     console.error('Error starting indexer:', error);
+    if (client) {
+      client.release();
+    }
     process.exit(1);
   }
 }

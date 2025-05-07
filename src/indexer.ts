@@ -1,8 +1,10 @@
 import { ethers } from 'ethers';
-import { query } from './db/index.js';
+import { query, getClient } from './db/index.js';
 import dotenv from 'dotenv';
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import { fileURLToPath } from 'url';
+import { Contract } from './types.js';
+import pLimit from 'p-limit';
 
 dotenv.config();
 
@@ -18,65 +20,121 @@ interface BlockGap {
   end: number;
 }
 
+interface ContractCreation {
+  address: string;
+  blockNumber: number;
+  blockHash: string;
+  transactionHash: string;
+  blockTimestamp: Date;
+}
+
+// Rate limit to 200 requests per second
+const rpcLimit = pLimit(20);
+
 async function processBlock(block: ethers.Block, provider: ethers.JsonRpcProvider) {
-  // Store block information
-  await query(
-    'INSERT INTO blocks (number, hash, parent_hash, timestamp) VALUES ($1, $2, $3, $4) ON CONFLICT (number) DO NOTHING',
-    [block.number, block.hash, block.parentHash, new Date(Number(block.timestamp) * 1000)]
-  );
+  const client = await getClient();
+  try {
+    // Insert block
+    await client.query('BEGIN');
+    await client.query(
+      'INSERT INTO blocks (number, hash, parent_hash, timestamp) VALUES ($1, $2, $3, to_timestamp($4)) ON CONFLICT (number) DO NOTHING',
+      [block.number, block.hash, block.parentHash, block.timestamp]
+    );
+    await client.query('COMMIT');
 
-  console.log(`Processing block ${block.number} with ${block.transactions.length} transactions`);
-  console.log('Transaction types:', block.transactions.map(tx => typeof tx));
+    // Get all transactions in this block with rate limiting
+    const receipts = await Promise.all(
+      block.transactions.map(tx => 
+        rpcLimit(() => provider.getTransactionReceipt(tx).catch(error => {
+          console.error(`Failed to fetch receipt for tx ${tx}:`, error);
+          return null;
+        }))
+      )
+    );
 
-  // Process transactions
-  for (const tx of block.transactions) {
-    // Get full transaction data if we only have the hash
-    let transaction: Transaction;
-    if (typeof tx === 'string') {
-      console.log(`Fetching full transaction data for hash: ${tx}`);
-      const fullTx = await provider.getTransaction(tx);
-      if (!fullTx) {
-        console.log(`Could not fetch transaction data for hash: ${tx}`);
-        continue;
+    // Process contract deployments and interactions
+    for (const receipt of receipts) {
+      if (!receipt) continue;
+
+      try {
+        await client.query('BEGIN');
+
+        // Handle contract deployments
+        if (receipt.contractAddress) {
+          // Update or insert contract with deployment info
+          await client.query(`
+            INSERT INTO contracts (
+              address, block_number, transaction_hash, deployer_address, 
+              deployment_timestamp, first_seen_at, is_pending
+            ) 
+            VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), false)
+            ON CONFLICT (address) 
+            DO UPDATE SET
+              block_number = EXCLUDED.block_number,
+              transaction_hash = EXCLUDED.transaction_hash,
+              deployer_address = EXCLUDED.deployer_address,
+              deployment_timestamp = EXCLUDED.deployment_timestamp,
+              is_pending = false
+          `, [
+            receipt.contractAddress,
+            block.number,
+            receipt.hash,
+            receipt.from,
+            block.timestamp,
+            block.timestamp
+          ]);
+        }
+
+        // Handle contract interactions
+        if (receipt.to) {
+          // First check if this address exists in our contracts table
+          const contractResult = await client.query(
+            'SELECT address FROM contracts WHERE address = $1',
+            [receipt.to]
+          );
+
+          // If contract doesn't exist, create it as pending
+          if (contractResult.rows.length === 0) {
+            await client.query(`
+              INSERT INTO contracts (
+                address, first_seen_at, is_pending
+              ) VALUES ($1, to_timestamp($2), true)
+              ON CONFLICT (address) DO NOTHING
+            `, [
+              receipt.to,
+              block.timestamp
+            ]);
+          }
+
+          // Now we can safely insert the interaction
+          const totalFee = receipt.gasUsed * receipt.gasPrice;
+          await client.query(
+            'INSERT INTO contract_interactions (contract_address, block_number, transaction_hash, from_address, gas_used, gas_price, total_fee, interaction_timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8)) ON CONFLICT (transaction_hash) DO NOTHING',
+            [
+              receipt.to,
+              block.number,
+              receipt.hash,
+              receipt.from,
+              receipt.gasUsed,
+              receipt.gasPrice,
+              totalFee,
+              block.timestamp
+            ]
+          );
+        }
+
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        console.error(`Error processing transaction ${receipt.hash}:`, error);
+        // Continue with next transaction even if this one fails
       }
-      transaction = fullTx as Transaction;
-    } else {
-      transaction = tx as Transaction;
     }
-    
-    // Check if this is a contract deployment
-    if (!transaction.to) {
-      const receipt = await provider.getTransactionReceipt(transaction.hash);
-      if (receipt?.contractAddress) {
-        await query(
-          'INSERT INTO contracts (address, deployer, block_number, transaction_hash) VALUES ($1, $2, $3, $4) ON CONFLICT (address) DO NOTHING',
-          [receipt.contractAddress, transaction.from, block.number, transaction.hash]
-        );
-      }
-    } 
-    // Check if this is a contract interaction
-    else if (transaction.data && transaction.data !== '0x') {
-      // First ensure the contract exists in our database
-      const contractResult = await query(
-        'SELECT 1 FROM contracts WHERE address = $1',
-        [transaction.to]
-      );
-
-      if (contractResult.rows.length === 0) {
-        // Contract doesn't exist, add it as an unknown contract
-        console.log(`Adding unknown contract ${transaction.to} from interaction`);
-        await query(
-          'INSERT INTO contracts (address, deployer, block_number, transaction_hash) VALUES ($1, $2, $3, $4) ON CONFLICT (address) DO NOTHING',
-          [transaction.to, '0x0000000000000000000000000000000000000000', block.number, transaction.hash]
-        );
-      }
-
-      // Now insert the interaction
-      await query(
-        'INSERT INTO contract_interactions (contract_address, caller, transaction_hash, block_number, method_signature, input_data) VALUES ($1, $2, $3, $4, $5, $6)',
-        [transaction.to, transaction.from, transaction.hash, block.number, transaction.data.slice(0, 10), transaction.data]
-      );
-    }
+  } catch (error) {
+    console.error(`Error processing block ${block.number}:`, error);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
@@ -233,10 +291,14 @@ export class BaseIndexer {
     this.provider.on('block', async (blockNumber: number) => {
       // Only process the new block
       const block = await this.provider.getBlock(blockNumber, true);
-      if (!block) return;
+      console.log(`Processing new block ${blockNumber}`);
+      if (!block){ 
+        console.log(`Block ${blockNumber} not found`);
+        return;
+      }
 
       await processBlock(block, this.provider);
-      this.currentBlock = blockNumber + 1;
+      console.log(`Processed new block ${blockNumber}`);
     });
   }
 

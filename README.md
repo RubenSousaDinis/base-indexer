@@ -1,111 +1,131 @@
 # Base Indexer
 
-A robust blockchain indexer for Base network that tracks contract deployments and interactions. Built with TypeScript, Node.js, and PostgreSQL.
+A high-performance indexer for the Base blockchain that tracks contract deployments and interactions.
 
 ## Features
 
-- Real-time block processing
-- Parallel historical data syncing with multiple worker threads
-- Contract deployment tracking
-- Contract interaction monitoring
-- Automatic gap detection and filling
-- PostgreSQL database for reliable data storage
+- Tracks contract deployments and interactions
+- Processes blocks in parallel batches
+- Handles both historical and new blocks
+- Uses connection pooling for efficient database access
+- Implements rate limiting for RPC calls
 
-## Prerequisites
+## Database Schema
 
-- Node.js 18 or higher
-- PostgreSQL 12 or higher
-- Access to a Base RPC endpoint
-
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/base-indexer.git
-cd base-indexer
+### Blocks
+```sql
+CREATE TABLE blocks (
+  number BIGINT PRIMARY KEY,
+  hash TEXT NOT NULL,
+  parent_hash TEXT NOT NULL,
+  block_timestamp TIMESTAMP NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  processed_at TIMESTAMP,
+  transactions_count INTEGER NOT NULL DEFAULT 0
+);
 ```
 
-2. Install dependencies:
-```bash
-npm install
+### Contracts
+```sql
+CREATE TABLE contracts (
+  address TEXT PRIMARY KEY,
+  block_number BIGINT,
+  transaction_hash TEXT,
+  deployer_address TEXT,
+  deployment_timestamp TIMESTAMP,
+  first_seen_at TIMESTAMP NOT NULL,
+  is_pending BOOLEAN NOT NULL DEFAULT true,
+  FOREIGN KEY (block_number) REFERENCES blocks(number)
+);
 ```
 
-3. Create a `.env` file in the root directory with the following variables:
-```env
-BASE_RPC_URL=your_base_rpc_url
-START_BLOCK=0
-BATCH_SIZE=100
-NUM_WORKERS=4
-```
-
-4. Set up the database:
-```bash
-npm run setup
+### Contract Interactions
+```sql
+CREATE TABLE contract_interactions (
+  id SERIAL PRIMARY KEY,
+  contract_address TEXT NOT NULL,
+  block_number BIGINT NOT NULL,
+  transaction_hash TEXT UNIQUE NOT NULL,
+  from_address TEXT NOT NULL,
+  gas_used BIGINT NOT NULL,
+  gas_price BIGINT NOT NULL,
+  total_fee BIGINT NOT NULL,
+  interaction_timestamp TIMESTAMP NOT NULL,
+  FOREIGN KEY (block_number) REFERENCES blocks(number)
+);
 ```
 
 ## Configuration
 
-The following environment variables can be configured:
+### Environment Variables
+```env
+# Base RPC URLs
+BASE_RPC_URL=https://api.developer.coinbase.com/rpc/v1/base/...
+BASE_INFURA_RPC=https://base-mainnet.infura.io/v3/...
 
-- `BASE_RPC_URL`: Your Base network RPC endpoint
-- `START_BLOCK`: The block number to start indexing from (default: 0)
-- `BATCH_SIZE`: Number of blocks to process in each batch (default: 100)
-- `NUM_WORKERS`: Number of worker threads for historical sync (default: 4)
+# PostgreSQL Configuration
+POSTGRES_HOST=your-rds-endpoint
+POSTGRES_PORT=5432
+POSTGRES_DB=base_indexer
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your-password
 
-## Usage
+# Indexer Configuration
+START_BLOCK=0
+BATCH_SIZE=100
+NUM_WORKERS=1
+```
 
-Start the indexer:
+### Database Connection Pool
+- Maximum connections: 60
+- Idle timeout: 30 seconds
+- Connection timeout: 2 seconds
+- Max uses per connection: 7500
+
+### Block Processing
+- Batch size: 2 transactions per batch
+- Number of workers: 50 concurrent workers
+- Parallel processing for new blocks
+- Sequential processing for historical blocks
+
+## Performance Considerations
+
+- Uses connection pooling to manage database connections efficiently
+- Implements rate limiting for RPC calls to prevent overloading
+- Processes transactions in parallel batches for new blocks
+- Maintains sequential processing for historical blocks to ensure data consistency
+- Records contract interactions even if the contract is not yet in our database
+
+## Development
+
+1. Install dependencies:
+```bash
+npm install
+```
+
+2. Set up environment variables:
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+3. Run the indexer:
 ```bash
 npm start
 ```
 
-For development with hot reloading:
+## Deployment
+
+The indexer is deployed on AWS ECS with the following components:
+- ECS Fargate for containerized deployment
+- RDS PostgreSQL for data storage
+- ECR for container registry
+
+To deploy:
 ```bash
-npm run dev
+cd terraform
+./deploy.sh
 ```
-
-### Database Management
-
-Set up the database:
-```bash
-npm run setup
-```
-
-Drop all database tables (⚠️ Warning: This will delete all data):
-```bash
-npm run drop
-```
-
-## Architecture
-
-The indexer uses a multi-threaded architecture:
-
-1. **Main Thread**
-   - Manages real-time block processing
-   - Coordinates worker threads
-   - Handles graceful shutdown
-
-2. **Worker Threads**
-   - Process historical blocks in parallel
-   - Each worker handles a specific block range
-   - Reports progress back to main thread
-
-## Database Schema
-
-The indexer uses the following tables:
-
-- `blocks`: Stores block information
-- `contracts`: Tracks deployed contracts
-- `contract_interactions`: Records contract interactions
-
-## Performance
-
-The indexer is optimized for performance through:
-
-- Parallel processing of historical blocks
-- Batch processing of transactions
-- Efficient database queries
-- Automatic gap detection and filling
 
 ## Contributing
 

@@ -11,46 +11,79 @@ console.log('Database configuration:', {
   port: process.env.POSTGRES_PORT,
   database: process.env.POSTGRES_DB,
   user: process.env.POSTGRES_USER,
-  ssl: process.env.NODE_ENV === 'production' ? 'enabled' : 'disabled'
+  ssl: 'enabled'
 });
 
+// Configure the pool with proper timeouts and connection limits
 const pool = new Pool({
   host: process.env.POSTGRES_HOST,
   port: parseInt(process.env.POSTGRES_PORT || '5432'),
   database: process.env.POSTGRES_DB,
   user: process.env.POSTGRES_USER,
   password: process.env.POSTGRES_PASSWORD,
-  ssl: process.env.NODE_ENV === 'production' ? {
+  ssl: {
     rejectUnauthorized: false // Required for RDS SSL connection
-  } : false
+  },
+  max: 60, // Maximum number of clients in the pool
+  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
+  maxUses: 7500, // Close a connection after it has been used 7500 times
+  log: () => {} // Disable query logging
 });
 
-export const query = async (text: string, params?: any[]) => {
-  const start = Date.now();
-  try {
-    const res = await pool.query(text, params);
-    const duration = Date.now() - start;
-    console.log('Executed query', { text, duration, rows: res.rowCount });
-    return res;
-  } catch (error) {
-    console.error('Error executing query', { text, error });
-    throw error;
-  }
-};
+// Add error handler for the pool
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle client', err);
+  process.exit(-1);
+});
 
-export const getClient = () => pool.connect();
-
-export async function initializeDatabase() {
+// Get a client from the pool
+export async function getClient() {
   const client = await pool.connect();
+  return client;
+}
+
+// Execute a query with retries
+export async function query(text: string, params?: any[], maxRetries = 3) {
+  let lastError: Error | null = null;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await pool.query(text, params);
+    } catch (error) {
+      lastError = error as Error;
+      if (error instanceof Error && error.message.includes('timeout')) {
+        console.error(`Error executing query (attempt ${i + 1}/${maxRetries})`, {
+          text,
+          error
+        });
+        // Wait before retrying with exponential backoff
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+        continue;
+      }
+      throw error;
+    }
+  }
+  
+  throw lastError;
+}
+
+// Initialize database
+export async function initializeDatabase() {
+  const client = await getClient();
   try {
+    await client.query('BEGIN');
     // Run migrations
     await runMigrations(client);
     console.log('Database initialized successfully');
+    await client.query('COMMIT');
     return client; // Return the client for the caller to manage
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Failed to initialize database:', error);
-    client.release();
     throw error;
+  } finally {
+    client.release();
   }
 }
 

@@ -1,13 +1,18 @@
-import { Pool, PoolClient } from 'pg';
-import { Migration, MigrationContext } from './types.js';
-import { migration as initialSchema } from './000_initial_schema.js';
+import { PoolClient } from 'pg';
+import * as initialSchema from './000_initial_schema.js';
 
-const migrations: Migration[] = [
-  initialSchema,
+const migrations = [
+  {
+    name: '000_initial_schema',
+    up: initialSchema.up,
+    down: initialSchema.down
+  }
 ];
 
 export async function runMigrations(client: PoolClient) {
   try {
+    await client.query('BEGIN');
+
     // Create migrations table if it doesn't exist
     await client.query(`
       CREATE TABLE IF NOT EXISTS migrations (
@@ -17,39 +22,27 @@ export async function runMigrations(client: PoolClient) {
       )
     `);
 
-    // Get executed migrations
-    const { rows: executedMigrations } = await client.query(
-      'SELECT name FROM migrations ORDER BY id'
-    );
-    const executedMigrationNames = new Set(executedMigrations.map(m => m.name));
-
-    // Run pending migrations
+    // Run each migration that hasn't been executed yet
     for (const migration of migrations) {
-      if (!executedMigrationNames.has(migration.name)) {
-        console.log(`Running migration: ${migration.name}`);
-        
-        try {
-          const context: MigrationContext = {
-            client,
-            releaseClient: false // Tell migrations not to release the client
-          };
+      const { rows } = await client.query(
+        'SELECT name FROM migrations WHERE name = $1',
+        [migration.name]
+      );
 
-          await migration.up(context);
-          
-          await client.query(
-            'INSERT INTO migrations (name) VALUES ($1)',
-            [migration.name]
-          );
-          
-          console.log(`Completed migration: ${migration.name}`);
-        } catch (error) {
-          console.error(`Migration ${migration.name} failed:`, error);
-          throw error;
-        }
+      if (rows.length === 0) {
+        console.log(`Running migration: ${migration.name}`);
+        await migration.up(client);
+        await client.query(
+          'INSERT INTO migrations (name) VALUES ($1)',
+          [migration.name]
+        );
+        console.log(`Completed migration: ${migration.name}`);
       }
     }
+
+    await client.query('COMMIT');
   } catch (error) {
-    console.error('Migration process failed:', error);
+    await client.query('ROLLBACK');
     throw error;
   }
 }
@@ -61,12 +54,7 @@ export async function rollbackMigration(client: PoolClient, migrationName: strin
       throw new Error(`Migration ${migrationName} not found`);
     }
 
-    const context: MigrationContext = {
-      client,
-      releaseClient: false // Tell migrations not to release the client
-    };
-
-    await migration.down(context);
+    await migration.down(client);
     
     await client.query(
       'DELETE FROM migrations WHERE name = $1',

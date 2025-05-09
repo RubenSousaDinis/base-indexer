@@ -36,6 +36,10 @@ docker buildx build --platform linux/amd64 -t base-indexer ../.
 docker tag base-indexer:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION:-eu-west-1}.amazonaws.com/base-indexer:latest
 docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION:-eu-west-1}.amazonaws.com/base-indexer:latest
 
+# Force new deployment of ECS service
+echo "Forcing new deployment of ECS service..."
+aws ecs update-service --cluster base-indexer --service base-indexer --force-new-deployment
+
 # Apply remaining Terraform configuration
 echo "Applying remaining Terraform configuration..."
 terraform apply -auto-approve

@@ -15,11 +15,11 @@ COPY . .
 RUN npm run build && \
     echo "Contents of dist directory:" && \
     ls -la dist && \
-    echo "Contents of dist/db directory:" && \
-    ls -la dist/db
+    echo "Contents of dist/indexer directory:" && \
+    ls -la dist/indexer
 
 # Expose port if needed (for future API endpoints)
 EXPOSE 3000
 
 # Start the indexer
-CMD ["npm", "start"] 
+CMD ["node", "--experimental-specifier-resolution=node", "dist/indexer/index.js"] 

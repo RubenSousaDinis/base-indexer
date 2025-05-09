@@ -1,25 +1,41 @@
-import { query } from './index.js';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import { getClient } from '../db/index.js';
 
 async function dropDatabase() {
+  const client = await getClient();
   try {
-    console.log('Dropping database tables...');
+    console.log('Starting database drop...');
+    
+    // Start transaction
+    await client.query('BEGIN');
 
-    // Drop tables in correct order due to foreign key constraints
-    await query('DROP TABLE IF EXISTS contract_interactions CASCADE');
-    await query('DROP TABLE IF EXISTS contracts CASCADE');
-    await query('DROP TABLE IF EXISTS blocks CASCADE');
+    // Drop all tables
+    await client.query(`
+      DROP TABLE IF EXISTS blocks CASCADE;
+      DROP TABLE IF EXISTS contracts CASCADE;
+      DROP TABLE IF EXISTS contract_interactions CASCADE;
+      DROP TABLE IF EXISTS migrations CASCADE;
+    `);
 
+    // Commit the transaction
+    await client.query('COMMIT');
     console.log('Database tables dropped successfully');
   } catch (error) {
-    console.error('Error dropping database tables:', error);
-    process.exit(1);
+    // Rollback in case of error
+    await client.query('ROLLBACK');
+    console.error('Error dropping database:', error);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
-// Run if this file is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  dropDatabase();
-} 
+// Run the drop
+dropDatabase()
+  .then(() => {
+    console.log('Database drop completed');
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error('Failed to drop database:', error);
+    process.exit(1);
+  }); 

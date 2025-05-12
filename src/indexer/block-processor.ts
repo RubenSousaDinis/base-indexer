@@ -3,6 +3,26 @@ import { query, getClient } from '../db/index.js';
 import { historicalRpcLimit, newBlockRpcLimit, delay } from './utils.js';
 import pLimit from 'p-limit';
 
+interface ContractDeployment {
+  address: string;
+  block_number: number;
+  transaction_hash: string;
+  deployer_address: string;
+  deployment_timestamp: number;
+  first_seen_at: number;
+}
+
+interface ContractInteraction {
+  contract_address: string;
+  block_number: number;
+  transaction_hash: string;
+  from_address: string;
+  gas_used: string;
+  gas_price: string;
+  total_fee: string;
+  interaction_timestamp: number;
+}
+
 export class BlockProcessor {
   private provider: ethers.JsonRpcProvider;
   private isRunning: boolean = false;
@@ -18,183 +38,49 @@ export class BlockProcessor {
     this.rpcLimit = isHistorical ? historicalRpcLimit : newBlockRpcLimit;
   }
 
-  private async processTransaction(txHash: string, blockNumber: number, block: any, client: any) {
-    try {
-      const receipt = await this.rpcLimit(() => this.provider.getTransactionReceipt(txHash));
-      if (!receipt) return;
+  private processReceipt(receipt: any, block: any): { deployments: ContractDeployment[], interactions: ContractInteraction[] } {
+    const deployments: ContractDeployment[] = [];
+    const interactions: ContractInteraction[] = [];
 
-      // Handle contract deployments
-      if (receipt.contractAddress) {
-        await client.query(`
-          INSERT INTO contracts (
-            address, block_number, transaction_hash, deployer_address, 
-            deployment_timestamp, first_seen_at, is_pending
-          ) 
-          VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), false)
-          ON CONFLICT (address) 
-          DO UPDATE SET
-            block_number = EXCLUDED.block_number,
-            transaction_hash = EXCLUDED.transaction_hash,
-            deployer_address = EXCLUDED.deployer_address,
-            deployment_timestamp = EXCLUDED.deployment_timestamp,
-            is_pending = false
-        `, [
-          receipt.contractAddress,
-          block.number,
-          receipt.hash,
-          receipt.from,
-          block.timestamp,
-          block.timestamp
-        ]);
-      }
-
-      // Handle contract interactions
-      if (receipt.to) {
-        // Now we can safely insert the interaction
-        const totalFee = receipt.gasUsed * receipt.gasPrice;
-        await client.query(
-          'INSERT INTO contract_interactions (contract_address, block_number, transaction_hash, from_address, gas_used, gas_price, total_fee, interaction_timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8)) ON CONFLICT (transaction_hash) DO NOTHING',
-          [
-            receipt.to,
-            block.number,
-            receipt.hash,
-            receipt.from,
-            receipt.gasUsed,
-            receipt.gasPrice,
-            totalFee,
-            block.timestamp
-          ]
-        );
-      }
-    } catch (error) {
-      console.error(`Error processing transaction ${txHash} in block ${blockNumber}:`, error);
-      throw error;
+    // Handle contract deployments
+    if (receipt.contractAddress) {
+      deployments.push({
+        address: receipt.contractAddress,
+        block_number: block.number,
+        transaction_hash: receipt.transactionHash,
+        deployer_address: receipt.from,
+        deployment_timestamp: block.timestamp,
+        first_seen_at: block.timestamp
+      });
     }
+
+    // Handle contract interactions
+    if (receipt.to) {
+      const totalFee = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice);
+      interactions.push({
+        contract_address: receipt.to,
+        block_number: block.number,
+        transaction_hash: receipt.transactionHash,
+        from_address: receipt.from,
+        gas_used: receipt.gasUsed,
+        gas_price: receipt.effectiveGasPrice,
+        total_fee: totalFee.toString(),
+        interaction_timestamp: block.timestamp
+      });
+    }
+
+    return { deployments, interactions };
   }
 
-  private async processBlock(blockNumber: number) {
-    const blockStartTime = Date.now();
-    try {
-      // Get a single client for all transactions in this block
-      this.client = await getClient();
-      await this.client.query('BEGIN');
-
-      const blockTag = ethers.toBeHex(blockNumber);
-      const block = await this.rpcLimit(() => this.provider.getBlock(blockTag));
-      if (!block) {
-        console.error(`Block ${blockNumber} not found`);
-        await this.client.query('ROLLBACK');
-        return;
-      }
-
-      console.log(`[Block ${blockNumber}] Starting processing of ${block.transactions.length} transactions`);
-
-      // Insert or update block with transaction count
-      await this.client.query(`
-        INSERT INTO blocks (
-          number, hash, parent_hash, block_timestamp, transactions_count
-        ) VALUES ($1, $2, $3, to_timestamp($4), $5)
-        ON CONFLICT (number) DO UPDATE SET
-          hash = EXCLUDED.hash,
-          parent_hash = EXCLUDED.parent_hash,
-          block_timestamp = EXCLUDED.block_timestamp,
-          transactions_count = EXCLUDED.transactions_count
-      `, [
-        block.number,
-        block.hash,
-        block.parentHash,
-        block.timestamp,
-        block.transactions.length
-      ]);
-
-      if (this.isHistorical) {
-        // Process historical blocks sequentially
-        for (const txHash of block.transactions) {
-          try {
-            await this.processTransaction(txHash, blockNumber, block, this.client);
-          } catch (error) {
-            console.error(`Error processing transaction ${txHash} in block ${blockNumber}:`, error);
-            // Rollback and get a new client for the next transaction
-            await this.client.query('ROLLBACK');
-            this.client.release();
-            this.client = await getClient();
-            await this.client.query('BEGIN');
-          }
-        }
-      } else {
-        // Process new blocks in parallel batches
-        const transactions = block.transactions;
-        const batches = [];
-        
-        // Split transactions into batches
-        for (let i = 0; i < transactions.length; i += this.BATCH_SIZE) {
-          batches.push(transactions.slice(i, i + this.BATCH_SIZE));
-        }
-
-        // Create a worker pool
-        const workerPool = pLimit(this.NUM_WORKERS);
-        let completedBatches = 0;
-        let completedTransactions = 0;
-
-        // Process batches in parallel
-        const batchPromises = batches.map(async (batch, batchIndex) => {
-          // Get a new client for each batch
-          const batchClient = await getClient();
-          await batchClient.query('BEGIN');
-
-          try {
-            // Process all transactions in the batch first
-            const transactionPromises = batch.map((txHash: string) => 
-              workerPool(async () => {
-                try {
-                  await this.processTransaction(txHash, blockNumber, block, batchClient);
-                  completedTransactions++;
-                } catch (error) {
-                  console.error(`[Block ${blockNumber}] Error in transaction ${txHash}:`, error);
-                  throw error;
-                }
-              })
-            );
-
-            // Wait for all transactions in the batch to complete
-            await Promise.all(transactionPromises);
-
-            // Only commit after all transactions in the batch are processed
-            await batchClient.query('COMMIT');
-            completedBatches++;
-          } catch (error) {
-            console.error(`[Block ${blockNumber}] Error processing batch ${batchIndex + 1}/${batches.length}:`, error);
-            await batchClient.query('ROLLBACK');
-          } finally {
-            batchClient.release();
-          }
-        });
-
-        await Promise.all(batchPromises);
-      }
-
-      // Mark block as processed
-      await this.client.query(
-        'UPDATE blocks SET processed_at = NOW() WHERE number = $1',
-        [blockNumber]
-      );
-
-      await this.client.query('COMMIT');
-      const totalBlockTime = Date.now() - blockStartTime;
-      if (!this.isHistorical) {
-        console.log(`[Block ${blockNumber}] Completed processing ${block.transactions.length} transactions in ${totalBlockTime}ms`);
-      }
-    } catch (error) {
-      console.error(`Error processing block ${blockNumber}:`, error);
-      if (this.client) {
-        await this.client.query('ROLLBACK');
-      }
-    } finally {
-      if (this.client) {
-        this.client.release();
-        this.client = null;
-      }
+  private async getTransactionReceipts(block: any): Promise<any[]> {
+    const blockNumberHex = ethers.toBeHex(block.number);
+    console.log(`[Block ${block.number}] Fetching receipts with block number ${blockNumberHex}`);
+    const receipts = await this.rpcLimit(() => this.provider.send('eth_getBlockReceipts', [blockNumberHex]));
+    console.log(`[Block ${block.number}] Received ${receipts?.length || 0} receipts`);
+    if (receipts && Array.isArray(receipts)) {
+      return receipts;
     }
+    return [];
   }
 
   private async processNextBlock() {
@@ -216,11 +102,162 @@ export class BlockProcessor {
       }
 
       const blockNumber = result.rows[0].number;
+
+      // Skip block 0 as it's a special block in Base
+      if (blockNumber === '0') {
+        console.log('Skipping block 0 as it is a special block in Base');
+        this.client = await getClient();
+        await this.client.query('BEGIN');
+        try {
+          await this.client.query(
+            'UPDATE blocks SET processed_at = NOW() WHERE number = $1',
+            [blockNumber]
+          );
+          await this.client.query('COMMIT');
+        } catch (error) {
+          await this.client.query('ROLLBACK');
+          throw error;
+        } finally {
+          this.client.release();
+          this.client = null;
+        }
+        return;
+      }
+
       await this.processBlock(blockNumber);
     } catch (error) {
       console.error('Error in processNextBlock:', error);
       // Add a small delay before retrying
       await delay(1000);
+    }
+  }
+
+  private async processBlock(blockNumber: number) {
+    const blockStartTime = Date.now();
+    try {
+      const blockTag = ethers.toBeHex(blockNumber);
+      const block = await this.rpcLimit(() => this.provider.getBlock(blockTag));
+      if (!block) {
+        console.error(`Block ${blockNumber} not found`);
+        return;
+      }
+
+      console.log(`[Block ${blockNumber}] Starting processing of ${block.transactions.length} transactions`);
+
+      // Get all transaction receipts
+      const receipts = await this.getTransactionReceipts(block);
+      if (!receipts || receipts.length === 0) {
+        console.error(`No receipts found for block ${blockNumber}`);
+        return;
+      }
+
+      // Filter out any null or invalid receipts
+      const validReceipts = receipts.filter(receipt => receipt && receipt.transactionHash);
+
+      // Process all receipts in memory
+      const allDeployments: ContractDeployment[] = [];
+      const allInteractions: ContractInteraction[] = [];
+
+      for (const receipt of validReceipts) {
+        const { deployments, interactions } = this.processReceipt(receipt, block);
+        allDeployments.push(...deployments);
+        allInteractions.push(...interactions);
+      }
+
+      // Get a client and start transaction
+      this.client = await getClient();
+      await this.client.query('BEGIN');
+
+      try {
+        // Insert or update block with transaction count
+        await this.client.query(`
+          INSERT INTO blocks (
+            number, hash, parent_hash, block_timestamp, transactions_count
+          ) VALUES ($1, $2, $3, to_timestamp($4), $5)
+          ON CONFLICT (number) DO UPDATE SET
+            hash = EXCLUDED.hash,
+            parent_hash = EXCLUDED.parent_hash,
+            block_timestamp = EXCLUDED.block_timestamp,
+            transactions_count = EXCLUDED.transactions_count
+        `, [
+          block.number,
+          block.hash,
+          block.parentHash,
+          block.timestamp,
+          block.transactions.length
+        ]);
+
+        // Insert all contract deployments
+        if (allDeployments.length > 0) {
+          const deploymentValues = allDeployments.map(d => `(
+            '${d.address}',
+            ${d.block_number},
+            '${d.transaction_hash}',
+            '${d.deployer_address}',
+            to_timestamp(${d.deployment_timestamp}),
+            to_timestamp(${d.first_seen_at}),
+            false
+          )`).join(',');
+
+          await this.client.query(`
+            INSERT INTO contracts (
+              address, block_number, transaction_hash, deployer_address,
+              deployment_timestamp, first_seen_at, is_pending
+            ) VALUES ${deploymentValues}
+            ON CONFLICT (address) DO UPDATE SET
+              block_number = EXCLUDED.block_number,
+              transaction_hash = EXCLUDED.transaction_hash,
+              deployer_address = EXCLUDED.deployer_address,
+              deployment_timestamp = EXCLUDED.deployment_timestamp,
+              is_pending = false
+          `);
+        }
+
+        // Insert all contract interactions
+        if (allInteractions.length > 0) {
+          const interactionValues = allInteractions.map(i => `(
+            '${i.contract_address}',
+            ${i.block_number},
+            '${i.transaction_hash}',
+            '${i.from_address}',
+            '${i.gas_used}',
+            '${i.gas_price}',
+            '${i.total_fee}',
+            to_timestamp(${i.interaction_timestamp})
+          )`).join(',');
+
+          await this.client.query(`
+            INSERT INTO contract_interactions (
+              contract_address, block_number, transaction_hash, from_address,
+              gas_used, gas_price, total_fee, interaction_timestamp
+            ) VALUES ${interactionValues}
+            ON CONFLICT (transaction_hash) DO NOTHING
+          `);
+        }
+
+        // Mark block as processed
+        await this.client.query(
+          'UPDATE blocks SET processed_at = NOW() WHERE number = $1',
+          [blockNumber]
+        );
+
+        await this.client.query('COMMIT');
+        const totalBlockTime = Date.now() - blockStartTime;
+        if (!this.isHistorical) {
+          console.log(`[Block ${blockNumber}] Completed processing ${validReceipts.length} transactions in ${totalBlockTime}ms`);
+        }
+      } catch (error) {
+        console.error(`Error processing block ${blockNumber}:`, error);
+        await this.client.query('ROLLBACK');
+        throw error;
+      }
+    } catch (error) {
+      console.error(`Error processing block ${blockNumber}:`, error);
+    } finally {
+      if (this.client) {
+        this.client.release();
+        this.client = null;
+      }
     }
   }
 

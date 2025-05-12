@@ -6,12 +6,12 @@ import { historicalRpcLimit, delay } from './utils';
 export class HistoricalBlockFetcher {
   private provider: ethers.JsonRpcProvider;
   private isRunning: boolean = false;
-  private batchSize: number = 10;
+  private batchSize: number = 50;
   private currentBlock: number = 0;
   private endBlock: number = 0;
 
   constructor() {
-    this.provider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL);
+    this.provider = new ethers.JsonRpcProvider(process.env.BASE_INFURA_RPC)
   }
 
   async start() {
@@ -54,10 +54,10 @@ export class HistoricalBlockFetcher {
         console.log(`Completed batch. Next block: ${this.currentBlock}`);
         
         // Add delay between batches
-        await delay(2000);
+        await delay(100);
       } catch (error) {
         console.error('Error fetching historical blocks:', error);
-        await delay(5000); // Longer delay on error
+        await delay(2000); // Longer delay on error
       }
     }
   }

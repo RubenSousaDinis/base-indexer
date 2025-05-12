@@ -22,4 +22,4 @@ RUN npm run build && \
 EXPOSE 3000
 
 # Start the indexer
-CMD ["node", "--experimental-specifier-resolution=node", "dist/indexer/index.js"] 
+CMD ["node", "--experimental-specifier-resolution=node", "--input-type=module", "--experimental-modules", "dist/indexer/index.js"] 

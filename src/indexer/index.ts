@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
-import { BlockListener } from './block-listener';
-import { HistoricalBlockFetcher } from './historical-block-fetcher';
-import { BlockProcessor } from './block-processor';
+import { BlockListener } from './block-listener.js';
+import { HistoricalBlockFetcher } from './historical-block-fetcher.js';
+import { BlockProcessor } from './block-processor.js';
 
 async function main() {
   // Create providers
@@ -11,7 +11,7 @@ async function main() {
   // Create instances of our workers
   const blockListener = new BlockListener();
   const historicalBlockFetcher = new HistoricalBlockFetcher();
-  const historicalBlockProcessor = new BlockProcessor(historicalProvider, true);
+  const historicalBlockProcessor = new BlockProcessor(newBlockProvider, true);
   const newBlockProcessor = new BlockProcessor(newBlockProvider, false);
 
   // Handle graceful shutdown

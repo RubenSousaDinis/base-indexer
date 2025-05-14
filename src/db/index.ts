@@ -26,15 +26,31 @@ const pool = new Pool({
   },
   max: 60, // Maximum number of clients in the pool
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
+  connectionTimeoutMillis: 10000, // Increased from 2000 to 10000
   maxUses: 7500, // Close a connection after it has been used 7500 times
-  log: () => {} // Disable query logging
+  log: (msg) => console.log('DB Query:', msg) // Enable query logging for debugging
 });
 
 // Add error handler for the pool
 pool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);
-  process.exit(-1);
+  // Don't exit the process, just log the error
+  // process.exit(-1);
+});
+
+// Add connection handler
+pool.on('connect', () => {
+  console.log('New client connected to database');
+});
+
+// Add acquire handler
+pool.on('acquire', () => {
+  console.log('Client acquired from pool');
+});
+
+// Add remove handler
+pool.on('remove', () => {
+  console.log('Client removed from pool');
 });
 
 // Get a client from the pool
@@ -72,11 +88,24 @@ export async function query(text: string, params?: any[], maxRetries = 3) {
 export async function initializeDatabase() {
   const client = await getClient();
   try {
-    await client.query('BEGIN');
-    // Run migrations
-    await runMigrations(client);
-    console.log('Database initialized successfully');
-    await client.query('COMMIT');
+    // Check if migrations table exists
+    const { rows } = await client.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'migrations'
+      );
+    `);
+
+    if (!rows[0].exists) {
+      await client.query('BEGIN');
+      // Run migrations
+      await runMigrations(client);
+      console.log('Database initialized successfully');
+      await client.query('COMMIT');
+    } else {
+      console.log('Database already initialized, skipping migrations');
+    }
     return client; // Return the client for the caller to manage
   } catch (error) {
     await client.query('ROLLBACK');

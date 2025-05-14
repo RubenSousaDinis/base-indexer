@@ -63,6 +63,11 @@ variable "base_rpc_url" {
   type        = string
 }
 
+variable "base_infura_rpc" {
+  description = "Base Infura RPC URL"
+  type        = string
+}
+
 variable "start_block" {
   description = "Starting block number for indexing"
   type        = string

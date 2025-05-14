@@ -3,9 +3,21 @@ import { BlockListener } from './block-listener.js';
 import { HistoricalBlockFetcher } from './historical-block-fetcher.js';
 import { BlockProcessor } from './block-processor.js';
 
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit the process, just log the error
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Don't exit the process, just log the error
+});
+
 async function main() {
   // Create providers
-  const historicalProvider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL);
+  const historicalProvider = new ethers.JsonRpcProvider(process.env.BASE_INFURA_RPC);
   const newBlockProvider = new ethers.JsonRpcProvider(process.env.BASE_INFURA_RPC);
 
   // Create instances of our workers
@@ -40,5 +52,5 @@ async function main() {
 // Start the application
 main().catch((error) => {
   console.error('Fatal error:', error);
-  process.exit(1);
+  // Don't exit the process, just log the error
 }); 

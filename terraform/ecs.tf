@@ -9,7 +9,7 @@ resource "aws_ecs_task_definition" "base_indexer" {
   network_mode            = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                     = "1024"
-  memory                  = "2048"
+  memory                  = "4096"
   execution_role_arn      = aws_iam_role.ecs_execution_role.arn
   task_role_arn           = aws_iam_role.ecs_task_role.arn
 
@@ -18,12 +18,16 @@ resource "aws_ecs_task_definition" "base_indexer" {
       name      = "base-indexer"
       image     = "${aws_ecr_repository.base_indexer.repository_url}:latest"
       essential = true
-      command   = ["node", "dist/index.js"]
+      command   = ["node", "dist/indexer/index.js"]
 
       environment = [
         {
           name  = "BASE_RPC_URL"
           value = var.base_rpc_url
+        },
+        {
+          name  = "BASE_INFURA_RPC"
+          value = var.base_infura_rpc
         },
         {
           name  = "START_BLOCK"
@@ -70,6 +74,14 @@ resource "aws_ecs_task_definition" "base_indexer" {
           "awslogs-stream-prefix" = "ecs"
         }
       }
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "ps aux | grep node | grep -v grep || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 60
+      }
     }
   ])
 }
@@ -86,6 +98,17 @@ resource "aws_ecs_service" "base_indexer" {
     subnets          = module.vpc.public_subnet_ids
     security_groups  = [aws_security_group.ecs_tasks.id]
     assign_public_ip = true
+  }
+
+  # Add deployment settings
+  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = 100
+  health_check_grace_period_seconds  = 60
+
+  # Enable deployment circuit breaker
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
   }
 }
 

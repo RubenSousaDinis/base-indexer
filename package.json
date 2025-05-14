@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "description": "Base blockchain indexer with PostgreSQL storage",
   "type": "module",
+  "main": "dist/indexer/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/indexer/index.js",
+    "start": "node --experimental-specifier-resolution=node dist/indexer/index.js",
     "dev": "tsx watch src/indexer/index.ts",
     "typecheck": "tsc --noEmit",
     "setup": "tsx src/db/setup.ts",

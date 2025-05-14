@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import { query } from '../db/index.js';
-import { newBlockRpcLimit } from './utils';
+import { delay } from './utils.js';
 
 // Block Listener - Adds new blocks to database
 export class BlockListener {
@@ -20,7 +20,7 @@ export class BlockListener {
 
       try {
         const blockTag = ethers.toBeHex(blockNumber);
-        const block = await newBlockRpcLimit(() => this.provider.getBlock(blockTag, true));
+        const block = await this.provider.getBlock(blockTag, true);
         if (!block) {
           console.error(`Block ${blockNumber} not found`);
           return;

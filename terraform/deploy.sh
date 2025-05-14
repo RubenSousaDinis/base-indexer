@@ -20,6 +20,7 @@ terraform init
 cat > terraform.tfvars << EOL
 aws_region = "${AWS_REGION:-eu-west-1}"
 base_rpc_url = "${BASE_RPC_URL}"
+base_infura_rpc = "${BASE_INFURA_RPC}"
 postgres_db = "${POSTGRES_DB:-base_indexer}"
 postgres_user = "${POSTGRES_USER:-base_indexer}"
 postgres_password = "${POSTGRES_PASSWORD}"

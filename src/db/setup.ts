@@ -48,18 +48,22 @@ async function initializeSchema() {
 
   const client = await pool.connect();
   try {
-    console.log('Dropping all existing tables...');
-    await client.query('DROP TABLE IF EXISTS contract_interactions CASCADE');
-    await client.query('DROP TABLE IF EXISTS contracts CASCADE');
-    await client.query('DROP TABLE IF EXISTS blocks CASCADE');
-    await client.query('DROP TABLE IF EXISTS transactions CASCADE');
-    await client.query('DROP TABLE IF EXISTS events CASCADE');
-    await client.query('DROP TABLE IF EXISTS migrations CASCADE');
-    console.log('All tables dropped successfully');
+    // Check if migrations table exists
+    const { rows } = await client.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'migrations'
+      );
+    `);
 
-    console.log('Initializing database schema...');
-    await runMigrations(client);
-    console.log('Schema initialized successfully');
+    if (!rows[0].exists) {
+      console.log('Initializing database schema...');
+      await runMigrations(client);
+      console.log('Schema initialized successfully');
+    } else {
+      console.log('Database schema already exists, skipping initialization');
+    }
   } finally {
     client.release();
     await pool.end();

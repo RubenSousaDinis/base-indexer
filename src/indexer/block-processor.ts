@@ -1,7 +1,6 @@
 import { ethers } from 'ethers';
 import { query, getClient } from '../db/index.js';
-import { historicalRpcLimit, newBlockRpcLimit, delay } from './utils.js';
-import pLimit from 'p-limit';
+import { newBlockRpcLimit, delay } from './utils.js';
 
 interface ContractDeployment {
   address: string;
@@ -35,7 +34,7 @@ export class BlockProcessor {
   constructor(provider: ethers.JsonRpcProvider, isHistorical: boolean = false) {
     this.provider = provider;
     this.isHistorical = isHistorical;
-    this.rpcLimit = isHistorical ? historicalRpcLimit : newBlockRpcLimit;
+    this.rpcLimit = isHistorical ? newBlockRpcLimit : newBlockRpcLimit;
   }
 
   private processReceipt(receipt: any, block: any): { deployments: ContractDeployment[], interactions: ContractInteraction[] } {
@@ -73,62 +72,15 @@ export class BlockProcessor {
   }
 
   private async getTransactionReceipts(block: any): Promise<any[]> {
-    const blockNumberHex = ethers.toBeHex(block.number);
-    console.log(`[Block ${block.number}] Fetching receipts with block number ${blockNumberHex}`);
-    const receipts = await this.rpcLimit(() => this.provider.send('eth_getBlockReceipts', [blockNumberHex]));
-    console.log(`[Block ${block.number}] Received ${receipts?.length || 0} receipts`);
-    if (receipts && Array.isArray(receipts)) {
-      return receipts;
-    }
-    return [];
-  }
-
-  private async processNextBlock() {
+    console.log(`[Block ${block.number}] Fetching receipts for block`);
     try {
-      // Get the next unprocessed block
-      const result = await query(
-        `SELECT number 
-         FROM blocks 
-         WHERE processed_at IS NULL 
-         ORDER BY number ${this.isHistorical ? 'ASC' : 'DESC'} 
-         LIMIT 1`
-      );
-
-      if (result.rows.length === 0) {
-        if (!this.isHistorical) {
-          console.log('New block processor: No blocks to process');
-        }
-        return;
-      }
-
-      const blockNumber = result.rows[0].number;
-
-      // Skip block 0 as it's a special block in Base
-      if (blockNumber === '0') {
-        console.log('Skipping block 0 as it is a special block in Base');
-        this.client = await getClient();
-        await this.client.query('BEGIN');
-        try {
-          await this.client.query(
-            'UPDATE blocks SET processed_at = NOW() WHERE number = $1',
-            [blockNumber]
-          );
-          await this.client.query('COMMIT');
-        } catch (error) {
-          await this.client.query('ROLLBACK');
-          throw error;
-        } finally {
-          this.client.release();
-          this.client = null;
-        }
-        return;
-      }
-
-      await this.processBlock(blockNumber);
+      const blockTag = ethers.toBeHex(block.number);
+      const receipts = await this.rpcLimit(() => this.provider.send('eth_getBlockReceipts', [blockTag]));
+      console.log(`[Block ${block.number}] Received ${receipts.length} receipts`);
+      return receipts;
     } catch (error) {
-      console.error('Error in processNextBlock:', error);
-      // Add a small delay before retrying
-      await delay(1000);
+      console.error(`Error fetching receipts for block ${block.number}:`, error);
+      return [];
     }
   }
 
@@ -151,14 +103,11 @@ export class BlockProcessor {
         return;
       }
 
-      // Filter out any null or invalid receipts
-      const validReceipts = receipts.filter(receipt => receipt && receipt.transactionHash);
-
       // Process all receipts in memory
       const allDeployments: ContractDeployment[] = [];
       const allInteractions: ContractInteraction[] = [];
 
-      for (const receipt of validReceipts) {
+      for (const receipt of receipts) {
         const { deployments, interactions } = this.processReceipt(receipt, block);
         allDeployments.push(...deployments);
         allInteractions.push(...interactions);
@@ -244,7 +193,7 @@ export class BlockProcessor {
         await this.client.query('COMMIT');
         const totalBlockTime = Date.now() - blockStartTime;
         if (!this.isHistorical) {
-          console.log(`[Block ${blockNumber}] Completed processing ${validReceipts.length} transactions in ${totalBlockTime}ms`);
+          console.log(`[Block ${blockNumber}] Completed processing ${receipts.length} transactions in ${totalBlockTime}ms`);
         }
       } catch (error) {
         console.error(`Error processing block ${blockNumber}:`, error);
@@ -261,12 +210,62 @@ export class BlockProcessor {
     }
   }
 
+  public async processNextBlock() {
+    try {
+      // Get the next unprocessed block
+      const result = await query(
+        `SELECT number 
+         FROM blocks 
+         WHERE processed_at IS NULL 
+         ORDER BY number ${this.isHistorical ? 'ASC' : 'DESC'} 
+         LIMIT 1`
+      );
+
+      if (result.rows.length === 0) {
+        if (!this.isHistorical) {
+          console.log('New block processor: No blocks to process');
+        }
+        return;
+      }
+
+      const blockNumber = result.rows[0].number;
+
+      // Skip block 0 as it's a special block in Base
+      if (blockNumber === '0') {
+        console.log('Skipping block 0 as it is a special block in Base');
+        this.client = await getClient();
+        await this.client.query('BEGIN');
+        try {
+          await this.client.query(
+            'UPDATE blocks SET processed_at = NOW() WHERE number = $1',
+            [blockNumber]
+          );
+          await this.client.query('COMMIT');
+        } catch (error) {
+          console.error('Error marking block 0 as processed:', error);
+          await this.client.query('ROLLBACK');
+        } finally {
+          this.client.release();
+          this.client = null;
+        }
+        return;
+      }
+
+      await this.processBlock(blockNumber);
+    } catch (error) {
+      console.error('Error in processNextBlock:', error);
+      // Add a small delay before retrying
+      await delay(1000);
+    }
+  }
+
   private async processLoop() {
+    console.log(`Starting ${this.isHistorical ? 'Historical' : 'New'} Block Processor loop`);
     while (this.isRunning) {
       await this.processNextBlock();
-      // Add a small delay between blocks to prevent overwhelming the database
       await delay(100);
     }
+    console.log(`Stopping ${this.isHistorical ? 'Historical' : 'New'} Block Processor loop`);
   }
 
   public async start() {

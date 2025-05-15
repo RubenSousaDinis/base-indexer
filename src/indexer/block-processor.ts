@@ -35,7 +35,7 @@ export class BlockProcessor {
     this.rpcLimit = isHistorical ? newBlockRpcLimit : newBlockRpcLimit;
   }
 
-  private processReceipt(receipt: any, block: any): { deployments: ContractDeployment[], interactions: ContractInteraction[] } {
+  private processReceipt(receipt: any, blockNumber: number): { deployments: ContractDeployment[], interactions: ContractInteraction[] } {
     const deployments: ContractDeployment[] = [];
     const interactions: ContractInteraction[] = [];
 
@@ -43,41 +43,43 @@ export class BlockProcessor {
     if (receipt.contractAddress) {
       deployments.push({
         address: receipt.contractAddress,
-        block_number: block.number,
+        block_number: blockNumber,
         transaction_hash: receipt.transactionHash,
         deployer_address: receipt.from,
-        deployment_timestamp: block.timestamp,
-        first_seen_at: block.timestamp
+        deployment_timestamp: Math.floor(Date.now() / 1000), // Use current timestamp as fallback
+        first_seen_at: Math.floor(Date.now() / 1000)
       });
     }
 
     // Handle contract interactions
     if (receipt.to) {
-      const totalFee = BigInt(receipt.gasUsed) * BigInt(receipt.gasPrice);
+      const gasUsed = receipt.gasUsed || '0';
+      const gasPrice = receipt.gasPrice || '0';
+      const totalFee = BigInt(gasUsed) * BigInt(gasPrice);
       interactions.push({
         contract_address: receipt.to,
-        block_number: block.number,
+        block_number: blockNumber,
         transaction_hash: receipt.transactionHash,
         from_address: receipt.from,
-        gas_used: receipt.gasUsed,
-        gas_price: receipt.gasPrice,
+        gas_used: gasUsed,
+        gas_price: gasPrice,
         total_fee: totalFee.toString(),
-        interaction_timestamp: block.timestamp
+        interaction_timestamp: Math.floor(Date.now() / 1000) // Use current timestamp as fallback
       });
     }
 
     return { deployments, interactions };
   }
 
-  private async getTransactionReceipts(block: any): Promise<any[]> {
-    console.log(`[Block ${block.number}] Fetching receipts for block`);
+  private async getTransactionReceipts(blockNumber: number): Promise<any[]> {
+    console.log(`[Block ${blockNumber}] Fetching receipts for block`);
     try {
-      const blockTag = ethers.toBeHex(block.number);
+      const blockTag = ethers.toBeHex(blockNumber);
       const receipts = await this.rpcLimit(() => this.provider.send('eth_getBlockReceipts', [blockTag]));
-      console.log(`[Block ${block.number}] Received ${receipts.length} receipts`);
+      console.log(`[Block ${blockNumber}] Received ${receipts.length} receipts`);
       return receipts;
     } catch (error) {
-      console.error(`Error fetching receipts for block ${block.number}:`, error);
+      console.error(`Error fetching receipts for block ${blockNumber}:`, error);
       return [];
     }
   }
@@ -85,17 +87,10 @@ export class BlockProcessor {
   private async processBlock(blockNumber: number) {
     const blockStartTime = Date.now();
     try {
-      const blockTag = ethers.toBeHex(blockNumber);
-      const block = await this.rpcLimit(() => this.provider.getBlock(blockTag));
-      if (!block) {
-        console.error(`Block ${blockNumber} not found`);
-        return;
-      }
-
-      console.log(`[Block ${blockNumber}] Starting processing of ${block.transactions.length} transactions`);
+      console.log(`[Block ${blockNumber}] Starting processing`);
 
       // Get all transaction receipts
-      const receipts = await this.getTransactionReceipts(block);
+      const receipts = await this.getTransactionReceipts(blockNumber);
       if (!receipts || receipts.length === 0) {
         console.error(`No receipts found for block ${blockNumber}`);
         return;
@@ -106,7 +101,7 @@ export class BlockProcessor {
       const allInteractions: ContractInteraction[] = [];
 
       for (const receipt of receipts) {
-        const { deployments, interactions } = this.processReceipt(receipt, block);
+        const { deployments, interactions } = this.processReceipt(receipt, blockNumber);
         allDeployments.push(...deployments);
         allInteractions.push(...interactions);
       }
@@ -116,24 +111,6 @@ export class BlockProcessor {
       await this.client.query('BEGIN');
 
       try {
-        // Insert or update block with transaction count
-        await this.client.query(`
-          INSERT INTO blocks (
-            number, hash, parent_hash, block_timestamp, transactions_count
-          ) VALUES ($1, $2, $3, to_timestamp($4), $5)
-          ON CONFLICT (number) DO UPDATE SET
-            hash = EXCLUDED.hash,
-            parent_hash = EXCLUDED.parent_hash,
-            block_timestamp = EXCLUDED.block_timestamp,
-            transactions_count = EXCLUDED.transactions_count
-        `, [
-          block.number,
-          block.hash,
-          block.parentHash,
-          block.timestamp,
-          block.transactions.length
-        ]);
-
         // Insert all contract deployments
         if (allDeployments.length > 0) {
           const deploymentValues = allDeployments.map(d => `(

@@ -116,9 +116,9 @@ resource "aws_db_instance" "base_indexer" {
   identifier           = "base-indexer"
   engine              = "postgres"
   engine_version      = "16.4"
-  instance_class      = "db.t3.micro"
-  allocated_storage   = 20
-  storage_type        = "gp2"
+  instance_class      = "db.t3.medium"
+  allocated_storage   = 100
+  storage_type        = "gp3"
   
   db_name             = var.postgres_db
   username            = var.postgres_user

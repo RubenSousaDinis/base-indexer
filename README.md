@@ -60,7 +60,8 @@ CREATE TABLE contract_interactions (
 ### Environment Variables
 ```env
 # Base RPC URLs
-BASE_INFURA_RPC=https://base-mainnet.infura.io/v3/...
+BLOCKS_FETCHER_RPC=https://base-mainnet.infura.io/v3/...  # For fetching blocks (both historical and new)
+BLOCKS_PROCESSOR_RPC=https://base-mainnet.infura.io/v3/...  # For processing blocks
 
 # PostgreSQL Configuration
 POSTGRES_HOST=your-rds-endpoint
@@ -71,8 +72,7 @@ POSTGRES_PASSWORD=your-password
 
 # Indexer Configuration
 START_BLOCK=0
-BATCH_SIZE=100
-NUM_WORKERS=1
+HISTORICAL_BLOCKS_BATCH_SIZE=5  # Number of blocks to fetch in each historical batch
 ```
 
 ### Database Connection Pool
@@ -142,6 +142,3 @@ cd terraform
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

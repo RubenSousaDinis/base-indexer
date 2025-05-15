@@ -23,13 +23,11 @@ interface ContractInteraction {
 }
 
 export class BlockProcessor {
-  private provider: ethers.JsonRpcProvider;
+  private readonly provider: ethers.JsonRpcProvider;
+  private readonly isHistorical: boolean;
   private isRunning: boolean = false;
-  private isHistorical: boolean;
   private client: any = null;
   private rpcLimit: any;
-  private readonly BATCH_SIZE = 2;
-  private readonly NUM_WORKERS = 50;
 
   constructor(provider: ethers.JsonRpcProvider, isHistorical: boolean = false) {
     this.provider = provider;
@@ -55,14 +53,14 @@ export class BlockProcessor {
 
     // Handle contract interactions
     if (receipt.to) {
-      const totalFee = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice);
+      const totalFee = BigInt(receipt.gasUsed) * BigInt(receipt.gasPrice);
       interactions.push({
         contract_address: receipt.to,
         block_number: block.number,
         transaction_hash: receipt.transactionHash,
         from_address: receipt.from,
         gas_used: receipt.gasUsed,
-        gas_price: receipt.effectiveGasPrice,
+        gas_price: receipt.gasPrice,
         total_fee: totalFee.toString(),
         interaction_timestamp: block.timestamp
       });
@@ -285,4 +283,4 @@ export class BlockProcessor {
     }
     console.log(`Stopping ${this.isHistorical ? 'Historical' : 'New'} Block Processor`);
   }
-} 
+}

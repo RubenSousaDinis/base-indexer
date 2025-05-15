@@ -6,12 +6,12 @@ import { newBlockRpcLimit, delay } from './utils.js';
 export class HistoricalBlockFetcher {
   private provider: ethers.JsonRpcProvider;
   private isRunning: boolean = false;
-  private batchSize: number = 5;
+  private batchSize: number = parseInt(process.env.HISTORICAL_BLOCKS_BATCH_SIZE || '5');
   private currentBlock: number = 0;
   private endBlock: number = 0;
 
-  constructor() {
-    this.provider = new ethers.JsonRpcProvider(process.env.BASE_INFURA_RPC)
+  constructor(provider: ethers.JsonRpcProvider) {
+    this.provider = provider;
   }
 
   async start() {

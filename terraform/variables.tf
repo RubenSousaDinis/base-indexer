@@ -58,13 +58,13 @@ variable "container_name" {
   default     = "base-indexer"
 }
 
-variable "base_rpc_url" {
-  description = "Base RPC URL"
+variable "blocks_fetcher_rpc" {
+  description = "RPC URL for fetching blocks (both historical and new)"
   type        = string
 }
 
-variable "base_infura_rpc" {
-  description = "Base Infura RPC URL"
+variable "blocks_processor_rpc" {
+  description = "RPC URL for processing blocks"
   type        = string
 }
 
@@ -74,16 +74,22 @@ variable "start_block" {
   default     = "0"
 }
 
-variable "batch_size" {
-  description = "Number of blocks to process in each batch"
+variable "historical_blocks_batch_size" {
+  description = "Number of blocks to fetch in each historical batch"
   type        = string
-  default     = "100"
+  default     = "5"
 }
 
-variable "num_workers" {
-  description = "Number of worker threads"
+variable "block_processor_batch_size" {
+  description = "Number of blocks to process in each batch"
   type        = string
   default     = "2"
+}
+
+variable "block_processor_num_workers" {
+  description = "Number of worker threads for block processing"
+  type        = string
+  default     = "50"
 }
 
 variable "service_desired_count" {
@@ -108,4 +114,9 @@ variable "postgres_password" {
   description = "PostgreSQL password"
   type        = string
   sensitive   = true
+}
+
+variable "postgres_host" {
+  description = "PostgreSQL host"
+  type        = string
 } 

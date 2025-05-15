@@ -7,8 +7,8 @@ export class BlockListener {
   private provider: ethers.JsonRpcProvider;
   private isRunning: boolean = false;
 
-  constructor() {
-    this.provider = new ethers.JsonRpcProvider(process.env.BASE_INFURA_RPC);
+  constructor(provider: ethers.JsonRpcProvider) {
+    this.provider = provider;
   }
 
   async start() {

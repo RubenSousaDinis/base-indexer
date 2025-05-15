@@ -22,24 +22,20 @@ resource "aws_ecs_task_definition" "base_indexer" {
 
       environment = [
         {
-          name  = "BASE_RPC_URL"
-          value = var.base_rpc_url
+          name  = "BLOCKS_FETCHER_RPC"
+          value = var.blocks_fetcher_rpc
         },
         {
-          name  = "BASE_INFURA_RPC"
-          value = var.base_infura_rpc
+          name  = "BLOCKS_PROCESSOR_RPC"
+          value = var.blocks_processor_rpc
         },
         {
           name  = "START_BLOCK"
           value = tostring(var.start_block)
         },
         {
-          name  = "BATCH_SIZE"
-          value = tostring(var.batch_size)
-        },
-        {
-          name  = "NUM_WORKERS"
-          value = tostring(var.num_workers)
+          name  = "HISTORICAL_BLOCKS_BATCH_SIZE"
+          value = tostring(var.historical_blocks_batch_size)
         }
       ]
 

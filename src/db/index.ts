@@ -27,8 +27,7 @@ const pool = new Pool({
   max: 60, // Maximum number of clients in the pool
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
   connectionTimeoutMillis: 10000, // Increased from 2000 to 10000
-  maxUses: 7500, // Close a connection after it has been used 7500 times
-  log: (msg) => console.log('DB Query:', msg) // Enable query logging for debugging
+  maxUses: 7500 // Close a connection after it has been used 7500 times
 });
 
 // Add error handler for the pool
@@ -45,12 +44,12 @@ pool.on('connect', () => {
 
 // Add acquire handler
 pool.on('acquire', () => {
-  console.log('Client acquired from pool');
+  // Removed logging to reduce noise
 });
 
 // Add remove handler
 pool.on('remove', () => {
-  console.log('Client removed from pool');
+  // Removed logging to reduce noise
 });
 
 // Get a client from the pool

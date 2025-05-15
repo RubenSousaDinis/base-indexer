@@ -17,14 +17,14 @@ process.on('uncaughtException', (error) => {
 
 async function main() {
   // Create providers
-  const historicalProvider = new ethers.JsonRpcProvider(process.env.BASE_INFURA_RPC);
-  const newBlockProvider = new ethers.JsonRpcProvider(process.env.BASE_INFURA_RPC);
+  const blockFetcherProvider = new ethers.JsonRpcProvider(process.env.BLOCKS_FETCHER_RPC);
+  const blockProcessorProvider = new ethers.JsonRpcProvider(process.env.BLOCKS_PROCESSOR_RPC);
 
   // Create instances of our workers
-  const blockListener = new BlockListener();
-  const historicalBlockFetcher = new HistoricalBlockFetcher();
-  const historicalBlockProcessor = new BlockProcessor(newBlockProvider, true);
-  const newBlockProcessor = new BlockProcessor(newBlockProvider, false);
+  const blockListener = new BlockListener(blockFetcherProvider);
+  const historicalBlockFetcher = new HistoricalBlockFetcher(blockFetcherProvider);
+  const historicalBlockProcessor = new BlockProcessor(blockProcessorProvider, true);
+  const newBlockProcessor = new BlockProcessor(blockProcessorProvider, false);
 
   // Handle graceful shutdown
   const shutdown = async () => {
